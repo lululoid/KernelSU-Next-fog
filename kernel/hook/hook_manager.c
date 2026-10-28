@@ -21,6 +21,9 @@
 #include "compat/kernel_compat.h"
 #include "runtime/ksud.h"
 
+// Susfs prctl handling
+#include "susfs/susfs.h"
+
 // Tracepoint registration count management
 // == 1: just us
 // >  1: someone else is also using syscall tracepoint e.g. ftrace
@@ -256,6 +259,7 @@ static inline bool check_syscall_fastpath(int nr)
 	case __NR_execveat:
 #endif
 	case __NR_setresuid:
+	case __NR_prctl:
 		return true;
 	default:
 		return false;
@@ -375,6 +379,17 @@ static void ksu_sys_enter_handler(void *data, struct pt_regs *regs, long id)
 			uid_t euid = (uid_t)PT_REGS_PARM2(regs);
 			uid_t suid = (uid_t)PT_REGS_PARM3(regs);
 			ksu_handle_setresuid(current_uid().val, ruid);
+			return;
+		}
+
+		// Handle prctl for SUSFS commands
+		if (id == __NR_prctl) {
+			int option = (int)PT_REGS_PARM1(regs);
+			unsigned long arg2 = PT_REGS_PARM2(regs);
+			unsigned long arg3 = PT_REGS_PARM3(regs);
+			unsigned long arg4 = PT_REGS_PARM4(regs);
+			unsigned long arg5 = PT_REGS_PARM5(regs);
+			ksu_handle_susfs_prctl(option, arg2, arg3, arg4, arg5);
 			return;
 		}
 	}

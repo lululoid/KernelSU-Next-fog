@@ -52,9 +52,9 @@ bool is_task_ksu_domain(const struct cred* cred);
 bool is_adbd(const struct cred *cred);
 
 bool is_ksu_domain();
+bool susfs_is_current_ksu_domain(void);
 
 bool is_zygote(const struct cred* cred);
-
 bool is_init(const struct cred* cred);
 
 void apply_kernelsu_rules();

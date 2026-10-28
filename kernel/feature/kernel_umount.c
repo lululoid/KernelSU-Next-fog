@@ -95,6 +95,26 @@ static void try_umount(const char *mnt, int flags)
     ksu_umount_mnt(mnt, &path, flags);
 }
 
+#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
+void ksu_try_umount(const char *mnt, bool check_mnt, int flags, uid_t uid)
+{
+	struct path path;
+	int err = kern_path(mnt, 0, &path);
+	if (err) {
+		pr_info("susfs: ksu_try_umount: kern_path %s failed: %d\n", mnt, err);
+		return;
+	}
+
+	if (path.dentry != path.mnt->mnt_root) {
+		path_put(&path);
+		return;
+	}
+
+	ksu_umount_mnt(mnt, &path, flags);
+	path_put(&path);
+}
+#endif
+
 struct umount_tw {
 	struct callback_head cb;
 };
