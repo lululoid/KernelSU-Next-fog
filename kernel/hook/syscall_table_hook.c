@@ -31,6 +31,9 @@
 #include "feature/adb_root.h"
 #include "runtime/ksud.h"
 
+extern void ksu_handle_newfstat_ret(unsigned int *fd, struct stat __user **statbuf_ptr);
+bool ksu_is_init_rc_file(struct file *fp);
+
 // The pt_regs-based syscall ABI (__arm64_sys_*/__x64_sys_*) exists since 4.17
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 17, 0)
 #error "syscall table hook requires kernel >= 4.17 (pt_regs syscall ABI)"
@@ -209,7 +212,68 @@ static long ksu_sth_newfstatat(const struct pt_regs *regs)
 
 	ksu_handle_stat(dfd, filename_user, flags);
 
-	return ksu_sth_call_orig(__NR_newfstatat, regs);
+	long ret = ksu_sth_call_orig(__NR_newfstatat, regs);
+
+	/* Patch st_size for init.rc stat calls so read() buffer has room
+	 * to append KSU_RC + module_rc. ksu_common_newfstat_ret handles
+	 * all internal checks (init cred, pending append data, etc.). */
+	if (*filename_user) {
+		char path[128];
+		if (strncpy_from_user_nofault(path, *filename_user, sizeof(path) - 1) >= 0) {
+			path[sizeof(path) - 1] = '\0';
+			if (!strcmp(path, "/init.rc") || !strcmp(path, "/system/etc/init/init.rc")) {
+				struct stat __user *statbuf = (struct stat __user *)PT_REGS_PARM3(regs);
+				ksu_handle_newfstat_ret((unsigned int *)dfd, &statbuf);
+			}
+		}
+	}
+
+	return ret;
+}
+#endif
+
+#ifdef __NR_fstat
+static long ksu_sth_fstat(const struct pt_regs *regs)
+{
+	unsigned int *fd = (unsigned int *)&PT_REGS_PARM1(regs);
+	struct stat __user *statbuf = (struct stat __user *)PT_REGS_PARM2(regs);
+
+	long ret = ksu_sth_call_orig(__NR_fstat, regs);
+
+	/* Patch st_size for init.rc stat calls so read() buffer has room
+	 * to append KSU_RC + module_rc. Android init uses fstat() (not
+	 * newfstatat()) to stat init.rc after opening it. */
+	if (is_init(current_cred())) {
+		struct file *file = fget(*fd);
+		if (file && ksu_is_init_rc_file(file)) {
+			ksu_handle_newfstat_ret(fd, &statbuf);
+		}
+		if (file)
+			fput(file);
+	}
+
+	return ret;
+}
+#endif
+
+#ifdef __NR_fstat64
+static long ksu_sth_fstat64(const struct pt_regs *regs)
+{
+	unsigned long *fd = (unsigned long *)&PT_REGS_PARM1(regs);
+	struct stat64 __user *statbuf = (struct stat64 __user *)PT_REGS_PARM2(regs);
+
+	long ret = ksu_sth_call_orig(__NR_fstat64, regs);
+
+	if (is_init(current_cred())) {
+		struct file *file = fget(*fd);
+		if (file && ksu_is_init_rc_file(file)) {
+			ksu_handle_newfstat_ret((unsigned int *)fd, (struct stat __user **)&statbuf);
+		}
+		if (file)
+			fput(file);
+	}
+
+	return ret;
 }
 #endif
 
@@ -230,6 +294,12 @@ void __init ksu_syscall_table_hook_init(void)
 #endif
 #ifdef __NR_newfstatat
 		{ __NR_newfstatat, ksu_sth_newfstatat },
+#endif
+#ifdef __NR_fstat
+		{ __NR_fstat, ksu_sth_fstat },
+#endif
+#ifdef __NR_fstat64
+		{ __NR_fstat64, ksu_sth_fstat64 },
 #endif
 	};
 	int i, patched = 0;

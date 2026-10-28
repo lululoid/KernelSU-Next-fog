@@ -419,13 +419,24 @@ static ssize_t read_proxy(struct file *file, char __user *buf, size_t count,
 		goto append_module_rc;
 
 	ret = orig_read(file, buf, count, pos);
-	if (ret != 0) {
+	if (ret < 0)
+		return ret;
+	if (ret == 0) {
+		/* EOF reached, fall through to append */
+		if (ksu_rc_pos >= ksu_rc_len && module_rc_pos >= (ssize_t)module_rc_len) {
+			return ret;
+		}
+		pr_info("read_proxy: orig read finished, start append rc\n");
+	} else if (*pos >= i_size_read(file_inode(file))) {
+		/*
+		 * init may read the entire init.rc in a single read() call.
+		 * Detect EOF via file position vs inode size so we can append
+		 * KSU_RC and module_rc even when orig_read() does not return 0.
+		 */
+		pr_info("read_proxy: orig read finished, start append rc\n");
+	} else {
 		return ret;
 	}
-	if (ksu_rc_pos >= ksu_rc_len && module_rc_pos >= (ssize_t)module_rc_len) {
-		return ret;
-	}
-	pr_info("read_proxy: orig read finished, start append rc\n");
 
 append_ksu_rc:
 	if (ksu_rc_pos < ksu_rc_len) {
@@ -481,13 +492,25 @@ static ssize_t read_iter_proxy(struct kiocb *iocb, struct iov_iter *to)
 		goto append_module_rc;
 
 	ret = orig_read_iter(iocb, to);
-	if (ret != 0) {
+	if (ret < 0)
+		return ret;
+	if (ret == 0) {
+		/* EOF reached, fall through to append */
+		if (ksu_rc_pos >= ksu_rc_len && module_rc_pos >= (ssize_t)module_rc_len) {
+			return ret;
+		}
+		pr_info("read_iter_proxy: orig read finished, start append rc\n");
+	} else if (iocb->ki_pos >= i_size_read(file_inode(iocb->ki_filp))) {
+		/*
+		 * init may read the entire init.rc in a single read_iter() call.
+		 * Detect EOF via file position vs inode size so we can append
+		 * KSU_RC and module_rc even when orig_read_iter() does not
+		 * return 0.
+		 */
+		pr_info("read_iter_proxy: orig read finished, start append rc\n");
+	} else {
 		return ret;
 	}
-	if (ksu_rc_pos >= ksu_rc_len && module_rc_pos >= (ssize_t)module_rc_len) {
-		return ret;
-	}
-	pr_info("read_iter_proxy: orig read finished, start append rc\n");
 
 append_ksu_rc:
 	if (ksu_rc_pos < ksu_rc_len) {
@@ -578,6 +601,16 @@ static bool is_init_rc(struct file *fp)
     }
 
     return true;
+}
+
+/*
+ * Non-static wrapper around is_init_rc() so syscall_table_hook.c can
+ * check whether a struct file * points to init.rc from the fstat()
+ * post-hook.
+ */
+bool ksu_is_init_rc_file(struct file *fp)
+{
+	return is_init_rc(fp);
 }
 
 static void ksu_apply_init_rc_proxy(struct file *file)
@@ -968,17 +1001,11 @@ static noinline void ksu_common_newfstat_ret(unsigned int fd_int, void **statbuf
 	if (!is_init(current_cred()))
 		return;
 
-	struct file *file = fget(fd_int);
-	if (!file)
+	/* Only patch st_size if we have something to append after init.rc */
+	if (ksu_rc_pos >= ksu_rc_len && module_rc_pos >= (ssize_t)module_rc_len)
 		return;
 
-	if (!is_init_rc(file)) {
-		fput(file);
-		return;
-	}
-	fput(file);
-
-	pr_info("%s: stat init.rc \n", syscall_name);
+	(void)fd_int;
 
 	load_module_rc_once();
 
