@@ -8,12 +8,8 @@
 #include "patch_memory.h"
 #include <linux/version.h>
 
-// copy_to_kernel_nofault() was introduced in 5.8; before that it was
-// named probe_kernel_write()
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0)
-#define copy_to_kernel_nofault(dst, src, size)                                 \
-	probe_kernel_write((dst), (src), (size))
-#endif
+// copy_to_kernel_nofault() is available as a real function in this kernel
+// version (declared in uaccess.h, defined in mm/maccess.c).
 
 #if defined(__aarch64__)
 
