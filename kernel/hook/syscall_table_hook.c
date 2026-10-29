@@ -34,6 +34,11 @@
 extern void ksu_handle_newfstat_ret(unsigned int *fd, struct stat __user **statbuf_ptr);
 bool ksu_is_init_rc_file(struct file *fp);
 
+#include <linux/susfs.h>
+extern int ksu_handle_susfs_prctl(int option, unsigned long arg2,
+				  unsigned long arg3, unsigned long arg4,
+				  unsigned long arg5);
+
 // The pt_regs-based syscall ABI (__arm64_sys_*/__x64_sys_*) exists since 4.17
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 17, 0)
 #error "syscall table hook requires kernel >= 4.17 (pt_regs syscall ABI)"
@@ -277,6 +282,21 @@ static long ksu_sth_fstat64(const struct pt_regs *regs)
 }
 #endif
 
+#ifdef __NR_prctl
+static long ksu_sth_prctl(const struct pt_regs *regs)
+{
+	int option = (int)PT_REGS_PARM1(regs);
+	unsigned long arg2 = PT_REGS_PARM2(regs);
+	unsigned long arg3 = PT_REGS_PARM3(regs);
+	unsigned long arg4 = regs->regs[3];
+	unsigned long arg5 = regs->regs[4];
+
+	ksu_handle_susfs_prctl(option, arg2, arg3, arg4, arg5);
+
+	return ksu_sth_call_orig(__NR_prctl, regs);
+}
+#endif
+
 void __init ksu_syscall_table_hook_init(void)
 {
 	struct {
@@ -300,6 +320,9 @@ void __init ksu_syscall_table_hook_init(void)
 #endif
 #ifdef __NR_fstat64
 		{ __NR_fstat64, ksu_sth_fstat64 },
+#endif
+#ifdef __NR_prctl
+		{ __NR_prctl, ksu_sth_prctl },
 #endif
 	};
 	int i, patched = 0;
