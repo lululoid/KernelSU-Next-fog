@@ -12,6 +12,10 @@
 #include <linux/version.h>
 #include <linux/utsname.h> // utsname() and uts_sem
 
+#ifdef CONFIG_KSU_SUSFS
+#include <linux/susfs.h>
+#endif
+
 #include "uapi/supercall.h"
 #include "supercall/internal.h"
 #include "arch.h"
@@ -286,6 +290,21 @@ int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
 		if (copy_to_user((void __user *)*arg, &reply, sizeof(reply)))
 			return 0;
 	}
+
+#ifdef CONFIG_KSU_SUSFS
+	if (magic2 == SUSFS_MAGIC) {
+		switch (cmd) {
+		case CMD_SUSFS_SHOW_VERSION:
+			susfs_show_version(arg);
+			break;
+		case CMD_SUSFS_SHOW_VARIANT:
+			susfs_show_variant(arg);
+			break;
+		default:
+			break;
+		}
+	}
+#endif
 
 	return 0;
 }
