@@ -72,4 +72,16 @@ config KSU_SYSCALL_TABLE_HOOK
 
 endchoice
 
+menu "KernelSU - SUSFS"
+
+config KSU_SUSFS
+	bool "KernelSU addon - SUSFS"
+	depends on KSU
+	depends on THREAD_INFO_IN_TASK
+	default y
+	help
+	  Patch and Enable SUSFS to kernel with KernelSU.
+
+endmenu
+
 endmenu
