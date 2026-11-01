@@ -300,6 +300,12 @@ int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
 		case CMD_SUSFS_SHOW_VARIANT:
 			susfs_show_variant(arg);
 			break;
+		case CMD_SUSFS_ENABLE_LOG:
+			susfs_enable_log(arg);
+			break;
+		case CMD_SUSFS_SHOW_ENABLED_FEATURES:
+			susfs_get_enabled_features(arg);
+			break;
 		default:
 			break;
 		}
