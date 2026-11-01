@@ -306,6 +306,12 @@ int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
 		case CMD_SUSFS_SHOW_ENABLED_FEATURES:
 			susfs_get_enabled_features(arg);
 			break;
+		case CMD_SUSFS_ADD_SUS_PATH:
+			susfs_add_sus_path(arg);
+			break;
+		case CMD_SUSFS_ADD_SUS_PATH_LOOP:
+			susfs_add_sus_path_loop(arg);
+			break;
 		default:
 			break;
 		}
