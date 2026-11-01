@@ -89,6 +89,7 @@ __attribute__((naked)) int __init kernelsu_init_early(void)
 #endif
 
 struct cred *ksu_cred;
+EXPORT_SYMBOL_GPL(ksu_cred);
 bool ksu_late_loaded;
 
 #ifdef CONFIG_KSU_DEBUG
