@@ -336,6 +336,9 @@ int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
 		case CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG:
 			susfs_set_cmdline_or_bootconfig(arg);
 			break;
+		case CMD_SUSFS_ADD_OPEN_REDIRECT:
+			susfs_add_open_redirect(arg);
+			break;
 		default:
 			break;
 		}
