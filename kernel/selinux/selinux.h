@@ -67,4 +67,11 @@ void escape_to_root_for_adb_root();
 
 extern u32 ksu_file_sid;
 
+extern u32 susfs_zygote_sid;
+extern u32 susfs_zygote_next_sid;
+
+bool susfs_is_current_ksu_domain(void);
+
+void susfs_set_batch_sid(void);
+
 #endif

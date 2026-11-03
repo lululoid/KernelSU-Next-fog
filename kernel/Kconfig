@@ -103,6 +103,13 @@ config KSU_SUSFS_SUS_PATH
 	help
 	  Enable SUSFS to hide specified paths from non-su processes.
 
+config KSU_SUSFS_SUS_MOUNT
+	bool "SUSFS hide mount"
+	depends on KSU_SUSFS
+	default y
+	help
+	  Enable SUSFS to hide mounts from non-su processes.
+
 endmenu
 
 endmenu
