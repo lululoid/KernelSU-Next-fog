@@ -124,6 +124,13 @@ config KSU_SUSFS_TRY_UMOUNT
 	help
 	  Enable SUSFS try umount command support.
 
+config KSU_SUSFS_SUS_KSTAT
+	bool "SUSFS kstat spoof"
+	depends on KSU_SUSFS
+	default y
+	help
+	  Enable SUSFS to spoof kstat results for specified inodes.
+
 endmenu
 
 endmenu

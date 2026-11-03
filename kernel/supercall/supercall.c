@@ -324,6 +324,15 @@ int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
 		case CMD_SUSFS_ADD_TRY_UMOUNT:
 			susfs_add_try_umount(arg);
 			break;
+		case CMD_SUSFS_ADD_SUS_KSTAT:
+			susfs_add_sus_kstat(arg);
+			break;
+		case CMD_SUSFS_UPDATE_SUS_KSTAT:
+			susfs_update_sus_kstat(arg);
+			break;
+		case CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY:
+			susfs_add_sus_kstat(arg);
+			break;
 		default:
 			break;
 		}
