@@ -321,6 +321,9 @@ int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
 		case CMD_SUSFS_SET_UNAME:
 			susfs_set_uname(arg);
 			break;
+		case CMD_SUSFS_ADD_TRY_UMOUNT:
+			susfs_add_try_umount(arg);
+			break;
 		default:
 			break;
 		}
