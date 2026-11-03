@@ -339,6 +339,9 @@ int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
 		case CMD_SUSFS_ADD_OPEN_REDIRECT:
 			susfs_add_open_redirect(arg);
 			break;
+		case CMD_SUSFS_ADD_SUS_MAP:
+			susfs_add_sus_map(arg);
+			break;
 		default:
 			break;
 		}
