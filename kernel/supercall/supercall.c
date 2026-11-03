@@ -333,6 +333,9 @@ int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
 		case CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY:
 			susfs_add_sus_kstat(arg);
 			break;
+		case CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG:
+			susfs_set_cmdline_or_bootconfig(arg);
+			break;
 		default:
 			break;
 		}
