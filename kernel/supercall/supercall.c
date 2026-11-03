@@ -318,6 +318,9 @@ int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
 		case CMD_SUSFS_HIDE_SUS_MNTS:
 			susfs_set_hide_sus_mnts_for_non_su_procs(arg);
 			break;
+		case CMD_SUSFS_SET_UNAME:
+			susfs_set_uname(arg);
+			break;
 		default:
 			break;
 		}
