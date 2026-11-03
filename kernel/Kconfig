@@ -152,6 +152,13 @@ config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
 	help
 	  Enable SUSFS to hide KSU/SUSFS-related symbols from /proc/kallsyms.
 
+config KSU_SUSFS_SUS_MAP
+	bool "SUSFS map"
+	depends on KSU_SUSFS
+	default y
+	help
+	  Enable SUSFS to hide mapped files from /proc/PID/maps, /proc/PID/smaps, /proc/PID/smaps_rollup, /proc/PID/pagemap, /proc/PID/fd/, and /proc/PID/map_files/.
+
 endmenu
 
 endmenu
