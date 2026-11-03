@@ -312,6 +312,12 @@ int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
 		case CMD_SUSFS_ADD_SUS_PATH_LOOP:
 			susfs_add_sus_path_loop(arg);
 			break;
+		case CMD_SUSFS_ADD_SUS_MOUNT:
+			susfs_add_sus_mount(arg);
+			break;
+		case CMD_SUSFS_HIDE_SUS_MNTS:
+			susfs_set_hide_sus_mnts_for_non_su_procs(arg);
+			break;
 		default:
 			break;
 		}
