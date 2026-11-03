@@ -145,6 +145,13 @@ config KSU_SUSFS_OPEN_REDIRECT
 	help
 	  Enable SUSFS to redirect open() calls from target path to redirected path.
 
+config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+	bool "SUSFS hide ksu/susfs symbols"
+	depends on KSU_SUSFS
+	default y
+	help
+	  Enable SUSFS to hide KSU/SUSFS-related symbols from /proc/kallsyms.
+
 endmenu
 
 endmenu
