@@ -117,6 +117,13 @@ config KSU_SUSFS_SPOOF_UNAME
 	help
 	  Enable SUSFS to spoof uname() syscall results.
 
+config KSU_SUSFS_TRY_UMOUNT
+	bool "SUSFS try umount"
+	depends on KSU_SUSFS
+	default y
+	help
+	  Enable SUSFS try umount command support.
+
 endmenu
 
 endmenu
