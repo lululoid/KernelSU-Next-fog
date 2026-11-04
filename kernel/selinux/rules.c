@@ -24,6 +24,11 @@
 #include "xfrm.h"
 #include "compat/kernel_compat.h"
 
+#ifdef CONFIG_KSU_SUSFS
+#include <linux/susfs.h>
+extern void susfs_set_batch_sid(void);
+#endif
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
 #define SELINUX_POLICY_INSTEAD_SELINUX_SS
 #endif
@@ -232,6 +237,9 @@ void apply_kernelsu_rules()
 	ksu_destroy_sepolicy(old_pol);
 
 	reset_avc_cache();
+#if defined(KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS)
+	susfs_set_batch_sid();
+#endif
 out_unlock:
 	mutex_unlock(&selinux_state.policy_mutex);
 #else
@@ -776,6 +784,9 @@ out_done:
 	 * a stale AVC cache would keep serving the pre-batch decisions.
 	 */
 	reset_avc_cache();
+#if defined(KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS)
+	susfs_set_batch_sid();
+#endif
 
 	if (ret)
 		goto out_free;

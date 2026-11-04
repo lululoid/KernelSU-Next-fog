@@ -25,6 +25,10 @@
 #include "hook/hook_manager.h"
 #include "feature/kernel_umount.h"
 #include "compat/kernel_compat.h"
+#ifdef CONFIG_KSU_SUSFS
+#include <linux/susfs.h>
+extern void susfs_run_extra_works(struct work_struct *work);
+#endif
 
 int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid)
 {
@@ -45,6 +49,11 @@ int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid)
 #ifdef KSU_KPROBES_HOOK
         ksu_set_task_tracepoint_flag(current);
 #endif
+
+#ifdef CONFIG_KSU_SUSFS
+		susfs_set_current_proc_no_su();
+		susfs_set_current_proc_umounted();
+#endif // #ifdef CONFIG_KSU_SUSFS
 
         pr_info("install fd for manager: %d\n", new_uid);
         ksu_install_fd();
@@ -69,11 +78,29 @@ int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid)
 #endif
     }
 
+#ifdef CONFIG_KSU_SUSFS
+		if (ksu_is_allow_uid_for_current(new_uid)) {
+			susfs_set_current_proc_no_su();
+			susfs_set_current_proc_umounted_for_zygote_next();
+		}
+#endif // #ifdef CONFIG_KSU_SUSFS
+
     // Handle kernel umount
     ksu_handle_umount(old_uid, new_uid);
 
+#ifdef CONFIG_KSU_SUSFS
+	ksu_handle_extra_susfs_work();
+#endif // #ifdef CONFIG_KSU_SUSFS
+
     return 0;
 }
+
+#ifdef CONFIG_KSU_SUSFS
+void ksu_handle_extra_susfs_work(void)
+{
+	susfs_run_extra_works(NULL);
+}
+#endif // #ifdef CONFIG_KSU_SUSFS
 
 void __init ksu_setuid_hook_init(void)
 {
