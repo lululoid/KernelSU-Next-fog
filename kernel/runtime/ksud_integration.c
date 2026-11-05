@@ -441,47 +441,36 @@ static ssize_t read_proxy(struct file *file, char __user *buf, size_t count,
 {
 	ssize_t ret = 0;
 	size_t append_count;
+	bool skip_read = false;
 #ifdef KSU_KPROBES_HOOK
 	// this runs in normal (non-atomic) read context, safe to open files
 	load_module_rc_once();
 #endif
-	mutex_lock(&module_rc_lock);
-	if (ksu_rc_pos && ksu_rc_pos < ksu_rc_len)
-		goto append_ksu_rc;
-	if (ksu_rc_pos >= ksu_rc_len && module_rc_pos < (ssize_t)module_rc_len)
-		goto append_module_rc;
 
-	ret = orig_read(file, buf, count, pos);
+	/* Quick check: skip orig_read if we're mid-append */
+	mutex_lock(&module_rc_lock);
+	skip_read = (ksu_rc_pos && ksu_rc_pos < ksu_rc_len) ||
+		    (ksu_rc_pos >= ksu_rc_len && module_rc_pos < (ssize_t)module_rc_len);
 	mutex_unlock(&module_rc_lock);
-	if (ret < 0)
-		return ret;
-	if (ret == 0) {
-		/* EOF reached, fall through to append */
-		mutex_lock(&module_rc_lock);
-		if (ksu_rc_pos >= ksu_rc_len && module_rc_pos >= (ssize_t)module_rc_len) {
-			mutex_unlock(&module_rc_lock);
+
+	if (!skip_read) {
+		ret = orig_read(file, buf, count, pos);
+		if (ret < 0)
 			return ret;
-		}
-		mutex_unlock(&module_rc_lock);
-		pr_info("read_proxy: orig read finished, start append rc\n");
-	} else if (*pos >= i_size_read(file_inode(file))) {
-		/*
-		 * init may read the entire init.rc in a single read() call.
-		 * Detect EOF via file position vs inode size so we can append
-		 * KSU_RC and module_rc even when orig_read() does not return 0.
-		 */
-		pr_info("read_proxy: orig read finished, start append rc\n");
-	} else {
-		return ret;
+		if (ret > 0 && *pos < i_size_read(file_inode(file)))
+			return ret;
+		if (ret == 0)
+			pr_info("read_proxy: orig read finished, start append rc\n");
+		else
+			pr_info("read_proxy: orig read finished, start append rc\n");
 	}
 
-append_ksu_rc:
+	/* Append KSU_RC and module_rc under lock */
 	mutex_lock(&module_rc_lock);
-	if (ksu_rc_pos < ksu_rc_len) {
+	if (ksu_rc_pos < ksu_rc_len && (size_t)ret < count) {
 		append_count = ksu_rc_len - ksu_rc_pos;
 		if (append_count > count - ret)
 			append_count = count - ret;
-		// copy_to_user returns the number of not copied
 		if (copy_to_user(buf + ret, KERNEL_SU_RC + ksu_rc_pos, append_count)) {
 			mutex_unlock(&module_rc_lock);
 			pr_info("read_proxy: append error, totally appended %ld\n", ksu_rc_pos);
@@ -490,16 +479,14 @@ append_ksu_rc:
 		pr_info("read_proxy: append %zu\n", append_count);
 
 		ksu_rc_pos += append_count;
-		if (ksu_rc_pos == ksu_rc_len) {
+		if (ksu_rc_pos == ksu_rc_len)
 			pr_info("read_proxy: append done\n");
-		}
 		ret += append_count;
 	}
 	mutex_unlock(&module_rc_lock);
 
-append_module_rc:
 	mutex_lock(&module_rc_lock);
-	if (module_rc_pos < (ssize_t)module_rc_len && (size_t)ret < count) {
+	if (ksu_rc_pos >= ksu_rc_len && module_rc_pos < (ssize_t)module_rc_len && (size_t)ret < count) {
 		append_count = module_rc_len - module_rc_pos;
 		if (append_count > count - ret)
 			append_count = count - ret;
@@ -525,45 +512,33 @@ static ssize_t read_iter_proxy(struct kiocb *iocb, struct iov_iter *to)
 {
 	ssize_t ret = 0;
 	size_t append_count;
+	bool skip_read = false;
 #ifdef KSU_KPROBES_HOOK
 	// this runs in normal (non-atomic) read context, safe to open files
 	load_module_rc_once();
 #endif
-	mutex_lock(&module_rc_lock);
-	if (ksu_rc_pos && ksu_rc_pos < ksu_rc_len)
-		goto append_ksu_rc;
-	if (ksu_rc_pos >= ksu_rc_len && module_rc_pos < (ssize_t)module_rc_len)
-		goto append_module_rc;
 
-	ret = orig_read_iter(iocb, to);
+	/* Quick check: skip orig_read_iter if we're mid-append */
+	mutex_lock(&module_rc_lock);
+	skip_read = (ksu_rc_pos && ksu_rc_pos < ksu_rc_len) ||
+		    (ksu_rc_pos >= ksu_rc_len && module_rc_pos < (ssize_t)module_rc_len);
 	mutex_unlock(&module_rc_lock);
-	if (ret < 0)
-		return ret;
-	if (ret == 0) {
-		/* EOF reached, fall through to append */
-		mutex_lock(&module_rc_lock);
-		if (ksu_rc_pos >= ksu_rc_len && module_rc_pos >= (ssize_t)module_rc_len) {
-			mutex_unlock(&module_rc_lock);
+
+	if (!skip_read) {
+		ret = orig_read_iter(iocb, to);
+		if (ret < 0)
 			return ret;
-		}
-		mutex_unlock(&module_rc_lock);
-		pr_info("read_iter_proxy: orig read finished, start append rc\n");
-	} else if (iocb->ki_pos >= i_size_read(file_inode(iocb->ki_filp))) {
-		/*
-		 * init may read the entire init.rc in a single read_iter() call.
-		 * Detect EOF via file position vs inode size so we can append
-		 * KSU_RC and module_rc even when orig_read_iter() does not
-		 * return 0.
-		 */
-		pr_info("read_iter_proxy: orig read finished, start append rc\n");
-	} else {
-		return ret;
+		if (ret > 0 && iocb->ki_pos < i_size_read(file_inode(iocb->ki_filp)))
+			return ret;
+		if (ret == 0)
+			pr_info("read_iter_proxy: orig read finished, start append rc\n");
+		else
+			pr_info("read_iter_proxy: orig read finished, start append rc\n");
 	}
 
-append_ksu_rc:
+	/* Append KSU_RC and module_rc under lock */
 	mutex_lock(&module_rc_lock);
 	if (ksu_rc_pos < ksu_rc_len) {
-		// copy_to_iter returns the number of copied bytes
 		append_count =
 			copy_to_iter(KERNEL_SU_RC + ksu_rc_pos, ksu_rc_len - ksu_rc_pos, to);
 		if (!append_count) {
@@ -573,22 +548,21 @@ append_ksu_rc:
 			return ret;
 		}
 		pr_info("read_iter_proxy: append %zu\n", append_count);
-
 		ksu_rc_pos += append_count;
-		if (ksu_rc_pos == ksu_rc_len) {
+		if (ksu_rc_pos == ksu_rc_len)
 			pr_info("read_iter_proxy: append done\n");
-		}
 		ret += append_count;
 	}
 	mutex_unlock(&module_rc_lock);
 
-append_module_rc:
 	mutex_lock(&module_rc_lock);
-	if (module_rc_pos < (ssize_t)module_rc_len) {
-		append_count = copy_to_iter(module_rc_buf + module_rc_pos, module_rc_len - module_rc_pos, to);
+	if (ksu_rc_pos >= ksu_rc_len && module_rc_pos < (ssize_t)module_rc_len) {
+		append_count = copy_to_iter(module_rc_buf + module_rc_pos,
+					    module_rc_len - module_rc_pos, to);
 		if (!append_count) {
 			mutex_unlock(&module_rc_lock);
-			pr_info("read_iter_proxy: module append error, appended %zd\n", module_rc_pos);
+			pr_info("read_iter_proxy: module append error, appended %zd\n",
+				module_rc_pos);
 			return ret;
 		}
 		pr_info("read_iter_proxy: append module %zu\n", append_count);
