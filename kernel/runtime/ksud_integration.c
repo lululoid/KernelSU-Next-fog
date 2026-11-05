@@ -25,6 +25,7 @@
 #ifdef KSU_KPROBES_HOOK
 #include <linux/kprobes.h>
 #endif
+#include <linux/mutex.h>
 #include <linux/printk.h>
 #include <linux/types.h>
 #include <linux/uaccess.h>
@@ -75,6 +76,8 @@ static const char KERNEL_SU_RC[] =
 static char *module_rc_buf;
 static size_t module_rc_len;
 static ssize_t module_rc_pos;
+static bool module_rc_loaded;
+static DEFINE_MUTEX(module_rc_lock);
 
 static struct file *open_module_rc(const char **chosen_path)
 {
@@ -94,7 +97,6 @@ static struct file *open_module_rc(const char **chosen_path)
 
 static void load_module_rc_once(void)
 {
-	static bool loaded = false;
 	struct file *f;
 	const char *path = NULL;
 	loff_t pos = 0;
@@ -102,11 +104,20 @@ static void load_module_rc_once(void)
 	size_t fsize;
 	const struct cred *old_cred;
 
-	if (loaded)
+	if (module_rc_loaded)
 		return;
-	loaded = true;
+
+	mutex_lock(&module_rc_lock);
+
+	if (module_rc_loaded) {
+		mutex_unlock(&module_rc_lock);
+		return;
+	}
+	module_rc_loaded = true;
 	if (ksu_no_custom_rc) {
 		pr_info("custom rc is disabled\n");
+		module_rc_loaded = false;
+		mutex_unlock(&module_rc_lock);
 		return;
 	}
 
@@ -115,24 +126,39 @@ static void load_module_rc_once(void)
 	f = open_module_rc(&path);
 	if (IS_ERR(f)) {
 		pr_info("module rc: open %s failed: %ld\n", path, PTR_ERR(f));
-		goto out_revert_creds;
+		module_rc_loaded = false;
+		revert_creds(old_cred);
+		mutex_unlock(&module_rc_lock);
+		return;
 	}
 
 	if (!S_ISREG(file_inode(f)->i_mode)) {
 		pr_warn("module rc: %s is not a regular file\n", path);
-		goto out_close_file;
+		module_rc_loaded = false;
+		filp_close(f, NULL);
+		revert_creds(old_cred);
+		mutex_unlock(&module_rc_lock);
+		return;
 	}
 
 	fsize = i_size_read(file_inode(f));
 	if (fsize == 0) {
 		pr_warn("module rc: skip empty module rc\n");
-		goto out_close_file;
+		module_rc_loaded = false;
+		filp_close(f, NULL);
+		revert_creds(old_cred);
+		mutex_unlock(&module_rc_lock);
+		return;
 	}
 
 	module_rc_buf = kvmalloc(fsize, GFP_KERNEL);
 	if (!module_rc_buf) {
 		pr_err("module rc: alloc %zu failed\n", fsize);
-		goto out_close_file;
+		module_rc_loaded = false;
+		filp_close(f, NULL);
+		revert_creds(old_cred);
+		mutex_unlock(&module_rc_lock);
+		return;
 	}
 
 	r = kernel_read(f, module_rc_buf, fsize, &pos);
@@ -141,24 +167,30 @@ static void load_module_rc_once(void)
 		pr_err("module rc: read failed: %zd\n", r);
 		kvfree(module_rc_buf);
 		module_rc_buf = NULL;
-		goto out_close_file;
+		module_rc_loaded = false;
+		filp_close(f, NULL);
+		revert_creds(old_cred);
+		mutex_unlock(&module_rc_lock);
+		return;
 	}
 
 	module_rc_len = r;
 	pr_info("module rc: loaded %zu bytes from %s\n", module_rc_len, path);
 
-out_close_file:
 	filp_close(f, NULL);
-
-out_revert_creds:
 	revert_creds(old_cred);
+	mutex_unlock(&module_rc_lock);
 }
 
 static void free_module_rc(void)
 {
+	mutex_lock(&module_rc_lock);
 	kvfree(module_rc_buf);
 	module_rc_buf = NULL;
 	module_rc_len = 0;
+	module_rc_pos = 0;
+	module_rc_loaded = false;
+	mutex_unlock(&module_rc_lock);
 }
 
 void stop_init_rc_hook();
@@ -413,19 +445,24 @@ static ssize_t read_proxy(struct file *file, char __user *buf, size_t count,
 	// this runs in normal (non-atomic) read context, safe to open files
 	load_module_rc_once();
 #endif
+	mutex_lock(&module_rc_lock);
 	if (ksu_rc_pos && ksu_rc_pos < ksu_rc_len)
 		goto append_ksu_rc;
 	if (ksu_rc_pos >= ksu_rc_len && module_rc_pos < (ssize_t)module_rc_len)
 		goto append_module_rc;
 
 	ret = orig_read(file, buf, count, pos);
+	mutex_unlock(&module_rc_lock);
 	if (ret < 0)
 		return ret;
 	if (ret == 0) {
 		/* EOF reached, fall through to append */
+		mutex_lock(&module_rc_lock);
 		if (ksu_rc_pos >= ksu_rc_len && module_rc_pos >= (ssize_t)module_rc_len) {
+			mutex_unlock(&module_rc_lock);
 			return ret;
 		}
+		mutex_unlock(&module_rc_lock);
 		pr_info("read_proxy: orig read finished, start append rc\n");
 	} else if (*pos >= i_size_read(file_inode(file))) {
 		/*
@@ -439,12 +476,14 @@ static ssize_t read_proxy(struct file *file, char __user *buf, size_t count,
 	}
 
 append_ksu_rc:
+	mutex_lock(&module_rc_lock);
 	if (ksu_rc_pos < ksu_rc_len) {
 		append_count = ksu_rc_len - ksu_rc_pos;
 		if (append_count > count - ret)
 			append_count = count - ret;
 		// copy_to_user returns the number of not copied
 		if (copy_to_user(buf + ret, KERNEL_SU_RC + ksu_rc_pos, append_count)) {
+			mutex_unlock(&module_rc_lock);
 			pr_info("read_proxy: append error, totally appended %ld\n", ksu_rc_pos);
 			return ret;
 		}
@@ -456,13 +495,16 @@ append_ksu_rc:
 		}
 		ret += append_count;
 	}
+	mutex_unlock(&module_rc_lock);
 
 append_module_rc:
+	mutex_lock(&module_rc_lock);
 	if (module_rc_pos < (ssize_t)module_rc_len && (size_t)ret < count) {
 		append_count = module_rc_len - module_rc_pos;
 		if (append_count > count - ret)
 			append_count = count - ret;
 		if (copy_to_user(buf + ret, module_rc_buf + module_rc_pos, append_count)) {
+			mutex_unlock(&module_rc_lock);
 			pr_info("read_proxy: module append error, totally appended %zd\n", module_rc_pos);
 			return ret;
 		}
@@ -474,6 +516,7 @@ append_module_rc:
 			free_module_rc();
 		}
 	}
+	mutex_unlock(&module_rc_lock);
 
 	return ret;
 }
@@ -486,19 +529,24 @@ static ssize_t read_iter_proxy(struct kiocb *iocb, struct iov_iter *to)
 	// this runs in normal (non-atomic) read context, safe to open files
 	load_module_rc_once();
 #endif
+	mutex_lock(&module_rc_lock);
 	if (ksu_rc_pos && ksu_rc_pos < ksu_rc_len)
 		goto append_ksu_rc;
 	if (ksu_rc_pos >= ksu_rc_len && module_rc_pos < (ssize_t)module_rc_len)
 		goto append_module_rc;
 
 	ret = orig_read_iter(iocb, to);
+	mutex_unlock(&module_rc_lock);
 	if (ret < 0)
 		return ret;
 	if (ret == 0) {
 		/* EOF reached, fall through to append */
+		mutex_lock(&module_rc_lock);
 		if (ksu_rc_pos >= ksu_rc_len && module_rc_pos >= (ssize_t)module_rc_len) {
+			mutex_unlock(&module_rc_lock);
 			return ret;
 		}
+		mutex_unlock(&module_rc_lock);
 		pr_info("read_iter_proxy: orig read finished, start append rc\n");
 	} else if (iocb->ki_pos >= i_size_read(file_inode(iocb->ki_filp))) {
 		/*
@@ -513,11 +561,13 @@ static ssize_t read_iter_proxy(struct kiocb *iocb, struct iov_iter *to)
 	}
 
 append_ksu_rc:
+	mutex_lock(&module_rc_lock);
 	if (ksu_rc_pos < ksu_rc_len) {
 		// copy_to_iter returns the number of copied bytes
 		append_count =
 			copy_to_iter(KERNEL_SU_RC + ksu_rc_pos, ksu_rc_len - ksu_rc_pos, to);
 		if (!append_count) {
+			mutex_unlock(&module_rc_lock);
 			pr_info("read_iter_proxy: append error, totally appended %ld\n",
 				ksu_rc_pos);
 			return ret;
@@ -530,11 +580,14 @@ append_ksu_rc:
 		}
 		ret += append_count;
 	}
+	mutex_unlock(&module_rc_lock);
 
 append_module_rc:
+	mutex_lock(&module_rc_lock);
 	if (module_rc_pos < (ssize_t)module_rc_len) {
 		append_count = copy_to_iter(module_rc_buf + module_rc_pos, module_rc_len - module_rc_pos, to);
 		if (!append_count) {
+			mutex_unlock(&module_rc_lock);
 			pr_info("read_iter_proxy: module append error, appended %zd\n", module_rc_pos);
 			return ret;
 		}
@@ -546,6 +599,8 @@ append_module_rc:
 			free_module_rc();
 		}
 	}
+	mutex_unlock(&module_rc_lock);
+
 	return ret;
 }
 
@@ -1009,10 +1064,15 @@ static noinline void ksu_common_newfstat_ret(unsigned int fd_int, void **statbuf
 
 	load_module_rc_once();
 
+	mutex_lock(&module_rc_lock);
+	/* module_rc_len is 0 when module_rc_buf is NULL (freed by free_module_rc),
+	 * so we only add ksu_rc_len in that case. */
 	uintptr_t statbuf_ptr_local = (uintptr_t)*(void **)statbuf_ptr;
 	void __user *statbuf = (void __user *)statbuf_ptr_local;
-	if (!statbuf)
+	if (!statbuf) {
+		mutex_unlock(&module_rc_lock);
 		return;
+	}
 
 	void __user *st_size_ptr;
 	long size, new_size;
@@ -1029,6 +1089,7 @@ static noinline void ksu_common_newfstat_ret(unsigned int fd_int, void **statbuf
 #endif
 
 	if (copy_from_user(&size, st_size_ptr, len)) {
+		mutex_unlock(&module_rc_lock);
 		pr_info("%s: read statbuf 0x%lx failed \n", syscall_name, (unsigned long)st_size_ptr);
 		return;
 	}
@@ -1041,6 +1102,7 @@ static noinline void ksu_common_newfstat_ret(unsigned int fd_int, void **statbuf
 	else
 		pr_info("%s: add ksu_rc_len failed: statbuf 0x%lx \n", syscall_name, (unsigned long)st_size_ptr);
 	
+	mutex_unlock(&module_rc_lock);
 	return;
 }
 
